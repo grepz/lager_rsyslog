@@ -1,0 +1,10 @@
+%% -*- mode: erlang -*-
+
+{application, lager_rsyslog,
+ [
+  {description, "Rsyslog backend for Lager"},
+  {vsn, "0.1"},
+  {modules, []},
+  {applications, [kernel, stdlib]},
+  {registered, []}
+ ]}.
