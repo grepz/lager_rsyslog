@@ -40,7 +40,7 @@
           ], ""},
          " ", message]).
 
--record(s, {}).
+-record(s, {addr, id, socket, level}).
 
 %%%===================================================================
 %%% API
@@ -82,7 +82,7 @@ add_handler() ->
 init(Options) ->
     Ident = get_option(ident, Options),
     Facility = get_option(facility, Options, ?DEFAULT_SYSLOG_FACILITY),
-    Level = get_option(level, Option, ?DEFAULT_SYSLOG_LEVEL),
+    Level = get_option(level, Options, ?DEFAULT_SYSLOG_LEVEL),
     SysLogHost = get_option(syslog_host, Options, ?DEFAULT_SYSLOG_HOST),
     SysLogPort = get_option(syslog_port, Options, ?DEFAULT_SYSLOG_PORT),
     Formatter = get_option(syslog_formatter, Option, ?DEFAULT_FORMATTER),
