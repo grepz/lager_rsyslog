@@ -85,7 +85,7 @@ init(Options) ->
     Level = get_option(level, Options, ?DEFAULT_SYSLOG_LEVEL),
     SysLogHost = get_option(syslog_host, Options, ?DEFAULT_SYSLOG_HOST),
     SysLogPort = get_option(syslog_port, Options, ?DEFAULT_SYSLOG_PORT),
-    Formatter = get_option(syslog_formatter, Option, ?DEFAULT_FORMATTER),
+    Formatter = get_option(syslog_formatter, Options, ?DEFAULT_FORMATTER),
     Format = get_option(syslog_format, Options, ?DEFAULT_FORMAT),
     init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format).
 
@@ -116,7 +116,7 @@ init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format)
 %%--------------------------------------------------------------------
 handle_event(
   {log, Message},
-  State #s{
+  State  = #s{
     level = Level,
     id = ID,
     socket = Sock,
