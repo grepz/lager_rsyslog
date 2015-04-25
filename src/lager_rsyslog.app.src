@@ -5,6 +5,6 @@
   {description, "Rsyslog backend for Lager"},
   {vsn, "0.1"},
   {modules, []},
-  {applications, [kernel, stdlib]},
+  {applications, [kernel, stdlib, syslog]},
   {registered, []}
  ]}.

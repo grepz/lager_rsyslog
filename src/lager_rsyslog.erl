@@ -14,12 +14,33 @@
 -export([start_link/0, add_handler/0]).
 
 %% gen_event callbacks
--export([init/1, handle_event/2, handle_call/2,
-         handle_info/2, terminate/2, code_change/3]).
+-export(
+   [
+    init/1, handle_event/2, handle_call/2, handle_info/2,
+    terminate/2, code_change/3
+   ]
+  ).
 
 -define(SERVER, ?MODULE).
 
--record(state, {}).
+-define(DEFAULT_SYSLOG_FACILITY, daemon).
+-define(DEFAULT_SYSLOG_LEVEL, info).
+-define(DEFAULT_SYSLOG_PORT, 514).
+-define(DEFAULT_SYSLOG_HOST, "localhost").
+-define(DEFAULT_FORMATTER, lager_default_formatter).
+-define(DEFAULT_FORMAT,
+        ["[", severity, "] ",
+         {pid, ""},
+         {module,
+          [
+           {pid, ["@"], ""},
+           module,
+           {function, [":", function], ""},
+           {line, [":",line], ""}
+          ], ""},
+         " ", message]).
+
+-record(s, {}).
 
 %%%===================================================================
 %%% API
@@ -58,8 +79,27 @@ add_handler() ->
 %% @spec init(Args) -> {ok, State}
 %% @end
 %%--------------------------------------------------------------------
-init([]) ->
-    {ok, #state{}}.
+init(Options) ->
+    Ident = get_option(ident, Options),
+    Facility = get_option(facility, Options, ?DEFAULT_SYSLOG_FACILITY),
+    Level = get_option(level, Option, ?DEFAULT_SYSLOG_LEVEL),
+    SysLogHost = get_option(syslog_host, Options, ?DEFAULT_SYSLOG_HOST),
+    SysLogPort = get_option(syslog_port, Options, ?DEFAULT_SYSLOG_PORT),
+    Formatter = get_option(syslog_formatter, Option, ?DEFAULT_FORMATTER),
+    Format = get_option(syslog_format, Options, ?DEFAULT_FORMAT),
+    init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format).
+
+init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format)
+  when is_list(Ident) ->
+    SysLogAddr = {syslog_addr(SysLogHost), syslog_port(SysLogPort)},
+    ID = log_event_id([Ident, Facility]),
+    {ok, Sock} = gen_udp:open(0),
+    {ok, #s{
+            addr = SysLogAddr,
+            id = ID,
+            socket = Sock,
+            level = Level
+           }}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -74,6 +114,21 @@ init([]) ->
 %%                          remove_handler
 %% @end
 %%--------------------------------------------------------------------
+handle_event(
+  {log, Message},
+  State #s{
+    level = Level,
+    id = ID,
+    socket = Sock,
+    addr = {SysLogAddr, SysLogPort}
+   }) ->
+    case lager_util:is_loggable(Message, Level, ID) of
+        true ->
+            _ = gen_udp:send(Sock, SysLogAddr, SysLogPort, ["<test>: ", Message]),
+            {ok, State};
+        false ->
+            {ok, State}
+    end;
 handle_event(_Event, State) ->
     {ok, State}.
 
@@ -137,3 +192,17 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+get_option(Option, Options) ->
+    get_option(Option, Options, undefined).
+
+get_option(Option, Options, Default) ->
+    proplists:get_value(Option, Options, Default).
+
+syslog_addr(Host) ->
+    {ok, InetAddr} = inet:getaddr(Host, inet),
+    InetAddr.
+
+syslog_port(Port) when is_integer(Port) andalso Port > 0 andalso Port < 65536 -> Port.
+
+log_event_id([Ident, Facility]) -> {?MODULE, {Ident, Facility}}.
