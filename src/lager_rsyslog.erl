@@ -83,10 +83,10 @@ init(Options) ->
     Ident = get_option(ident, Options),
     Facility = get_option(facility, Options, ?DEFAULT_SYSLOG_FACILITY),
     Level = get_option(level, Options, ?DEFAULT_SYSLOG_LEVEL),
-    SysLogHost = get_option(syslog_host, Options, ?DEFAULT_SYSLOG_HOST),
-    SysLogPort = get_option(syslog_port, Options, ?DEFAULT_SYSLOG_PORT),
-    Formatter = get_option(syslog_formatter, Options, ?DEFAULT_FORMATTER),
-    Format = get_option(syslog_format, Options, ?DEFAULT_FORMAT),
+    SysLogHost = get_option(host, Options, ?DEFAULT_SYSLOG_HOST),
+    SysLogPort = get_option(port, Options, ?DEFAULT_SYSLOG_PORT),
+    Formatter = get_option(formatter, Options, ?DEFAULT_FORMATTER),
+    Format = get_option(format, Options, ?DEFAULT_FORMAT),
     init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format).
 
 init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format)
