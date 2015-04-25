@@ -6,7 +6,7 @@
 %%% @end
 %%% Created : 17 Apr 2015 by Stanislav M. Ivankin <lessgrep@gmail.com>
 %%%-------------------------------------------------------------------
--module(lager_rsyslog).
+-module(lager_rsyslog_backend).
 
 -behaviour(gen_event).
 
