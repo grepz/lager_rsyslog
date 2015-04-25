@@ -40,7 +40,7 @@
           ], ""},
          " ", message]).
 
--record(s, {addr, id, socket, level}).
+-record(s, {addr, id, socket, level, format}).
 
 %%%===================================================================
 %%% API
@@ -92,11 +92,13 @@ init(Options) ->
 init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format)
   when is_list(Ident) ->
     SysLogAddr = {syslog_addr(SysLogHost), syslog_port(SysLogPort)},
+    MessageFormat = {Formatter, Format},
     ID = log_event_id([Ident, Facility]),
     {ok, Sock} = gen_udp:open(0),
     {ok, #s{
             addr = SysLogAddr,
             id = ID,
+            format = MessageFormat,
             socket = Sock,
             level = Level
            }}.
@@ -116,15 +118,20 @@ init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format)
 %%--------------------------------------------------------------------
 handle_event(
   {log, Message},
-  State  = #s{
-    level = Level,
-    id = ID,
-    socket = Sock,
-    addr = {SysLogAddr, SysLogPort}
-   }) ->
+  State = #s{
+             level = Level,
+             id = ID,
+             socket = Sock,
+             addr = {SysLogAddr, SysLogPort},
+             format = {Formatter, Format}
+            }
+ ) ->
     case lager_util:is_loggable(Message, Level, ID) of
         true ->
-            _ = gen_udp:send(Sock, SysLogAddr, SysLogPort, ["<test>: ", Message]),
+            _ = gen_udp:send(
+                  Sock, SysLogAddr, SysLogPort,
+                  ["<test>: ", Formatter:format(Message, Format)]
+                 ),
             {ok, State};
         false ->
             {ok, State}
