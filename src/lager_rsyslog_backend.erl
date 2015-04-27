@@ -23,6 +23,8 @@
 
 -define(SERVER, ?MODULE).
 
+-define(SYSLOG_VERSION, 1).
+
 -define(DEFAULT_SYSLOG_FACILITY, daemon).
 -define(DEFAULT_SYSLOG_LEVEL, info).
 -define(DEFAULT_SYSLOG_PORT, 514).
@@ -40,7 +42,7 @@
           ], ""},
          " ", message]).
 
--record(s, {addr, id, socket, level, format}).
+-record(s, {addr, id, ident, socket, level, format, facility}).
 
 %%%===================================================================
 %%% API
@@ -92,15 +94,19 @@ init(Options) ->
 init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format)
   when is_list(Ident) ->
     SysLogAddr = {syslog_addr(SysLogHost), syslog_port(SysLogPort)},
+    SysLogFacility = syslog:facility(Facility),
+    {ok, LagerLevel} = lager_log_level(Level),
     MessageFormat = {Formatter, Format},
     ID = log_event_id([Ident, Facility]),
     {ok, Sock} = gen_udp:open(0),
     {ok, #s{
             addr = SysLogAddr,
             id = ID,
+            ident = Ident,
             format = MessageFormat,
+            facility = SysLogFacility,
             socket = Sock,
-            level = Level
+            level = LagerLevel
            }}.
 
 %%--------------------------------------------------------------------
@@ -121,16 +127,20 @@ handle_event(
   State = #s{
              level = Level,
              id = ID,
+             ident = Ident,
              socket = Sock,
              addr = {SysLogAddr, SysLogPort},
+             facility = Facility,
              format = {Formatter, Format}
             }
  ) ->
     case lager_util:is_loggable(Message, Level, ID) of
         true ->
+            Severity = Facility + priority(lager_msg:severity(Message)),
+            Header = syslog_msg_header(Severity, Ident),
             _ = gen_udp:send(
                   Sock, SysLogAddr, SysLogPort,
-                  ["<test>: ", Formatter:format(Message, Format)]
+                  [Header, Formatter:format(Message, Format)]
                  ),
             {ok, State};
         false ->
@@ -152,6 +162,12 @@ handle_event(_Event, State) ->
 %%                   {remove_handler, Reply}
 %% @end
 %%--------------------------------------------------------------------
+handle_call(get_loglevel, #s{level = Level} = State) -> {ok, Level, State};
+handle_call({set_loglevel, Level}, State) ->
+    case lager_log_level(Level) of
+        {ok, LagerLevel} -> {ok, ok, State#s{level = LagerLevel}};
+        {error, Error} -> {ok, Error, State}
+    end;
 handle_call(_Request, State) ->
     Reply = ok,
     {ok, Reply, State}.
@@ -213,3 +229,94 @@ syslog_addr(Host) ->
 syslog_port(Port) when is_integer(Port) andalso Port > 0 andalso Port < 65536 -> Port.
 
 log_event_id([Ident, Facility]) -> {?MODULE, {Ident, Facility}}.
+
+lager_log_level(Level) ->
+    try lager_util:config_to_mask(Level) of
+        Res -> {ok, Res}
+    catch
+        error:undef -> {ok, lager_util:level_to_num(Level)};
+        _:_ -> {error, bad_log_level}
+    end.
+
+priority(emergency) -> 0;
+priority(alert)     -> 1;
+priority(critical)  -> 2;
+priority(error)     -> 3;
+priority(warning)   -> 4;
+priority(notice)    -> 5;
+priority(info)      -> 6;
+priority(debug)     -> 7;
+priority(N) when is_integer(N), N >= 0 -> N;
+priority(_) -> erlang:error(badarg).
+
+
+%% The syslog message has the following ABNF [RFC5234] definition:
+
+%%    SYSLOG-MSG      = HEADER SP STRUCTURED-DATA [SP MSG]
+
+%%    HEADER          = PRI VERSION SP TIMESTAMP SP HOSTNAME
+%%                      SP APP-NAME SP PROCID SP MSGID
+%%    PRI             = "<" PRIVAL ">"
+%%    PRIVAL          = 1*3DIGIT ; range 0 .. 191
+%%    VERSION         = NONZERO-DIGIT 0*2DIGIT
+%%    HOSTNAME        = NILVALUE / 1*255PRINTUSASCII
+
+%%    APP-NAME        = NILVALUE / 1*48PRINTUSASCII
+%%    PROCID          = NILVALUE / 1*128PRINTUSASCII
+%%    MSGID           = NILVALUE / 1*32PRINTUSASCII
+
+%%    TIMESTAMP       = NILVALUE / FULL-DATE "T" FULL-TIME
+%%    FULL-DATE       = DATE-FULLYEAR "-" DATE-MONTH "-" DATE-MDAY
+%%    DATE-FULLYEAR   = 4DIGIT
+%%    DATE-MONTH      = 2DIGIT  ; 01-12
+%%    DATE-MDAY       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on
+%%                              ; month/year
+%%    FULL-TIME       = PARTIAL-TIME TIME-OFFSET
+%%    PARTIAL-TIME    = TIME-HOUR ":" TIME-MINUTE ":" TIME-SECOND
+%%                      [TIME-SECFRAC]
+%%    TIME-HOUR       = 2DIGIT  ; 00-23
+%%    TIME-MINUTE     = 2DIGIT  ; 00-59
+%%    TIME-SECOND     = 2DIGIT  ; 00-59
+%%    TIME-SECFRAC    = "." 1*6DIGIT
+%%    TIME-OFFSET     = "Z" / TIME-NUMOFFSET
+%%    TIME-NUMOFFSET  = ("+" / "-") TIME-HOUR ":" TIME-MINUTE
+
+
+%%    STRUCTURED-DATA = NILVALUE / 1*SD-ELEMENT
+%%    SD-ELEMENT      = "[" SD-ID *(SP SD-PARAM) "]"
+%%    SD-PARAM        = PARAM-NAME "=" %d34 PARAM-VALUE %d34
+%%    SD-ID           = SD-NAME
+%%    PARAM-NAME      = SD-NAME
+%%    PARAM-VALUE     = UTF-8-STRING ; characters '"', '\' and
+%%                                   ; ']' MUST be escaped.
+%%    SD-NAME         = 1*32PRINTUSASCII
+%%                      ; except '=', SP, ']', %d34 (")
+
+%%    MSG             = MSG-ANY / MSG-UTF8
+%%    MSG-ANY         = *OCTET ; not starting with BOM
+%%    MSG-UTF8        = BOM UTF-8-STRING
+%%    BOM             = %xEF.BB.BF
+
+%%    UTF-8-STRING    = *OCTET ; UTF-8 string as specified
+%%                   ; in RFC 3629
+
+%%    OCTET           = %d00-255
+%%    SP              = %d32
+%%    PRINTUSASCII    = %d33-126
+%%    NONZERO-DIGIT   = %d49-57
+%%    DIGIT           = %d48 / NONZERO-DIGIT
+%%    NILVALUE        = "-"
+
+syslog_msg_header(Facility, Ident) ->
+    io_lib:format(
+      "<~B>~B ~s ~s ~s - - -",
+      [Facility, ?SYSLOG_VERSION, timestamp_str(), net_adm:localhost(), Ident]
+     ).
+
+timestamp_str() ->
+    {{Year, Month, Day}, {Hour, Min, Sec}} =
+        calendar:now_to_universal_time(erlang:now()),
+    io_lib:format(
+      "~4.10.0B-~2.10.0B-~2.10.0BT~2.10.0B:~2.10.0B:~2.10.0BZ",
+      [Year, Month, Day, Hour, Min, Sec]
+     ).
