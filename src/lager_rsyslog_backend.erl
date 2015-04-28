@@ -82,31 +82,31 @@ add_handler() ->
 %% @end
 %%--------------------------------------------------------------------
 init(Options) ->
-    Ident = get_option(ident, Options),
-    Facility = get_option(facility, Options, ?DEFAULT_SYSLOG_FACILITY),
-    Level = get_option(level, Options, ?DEFAULT_SYSLOG_LEVEL),
+    Ident      = get_option(ident, Options),
+    Facility   = get_option(facility, Options, ?DEFAULT_SYSLOG_FACILITY),
+    Level      = get_option(level, Options, ?DEFAULT_SYSLOG_LEVEL),
     SysLogHost = get_option(host, Options, ?DEFAULT_SYSLOG_HOST),
     SysLogPort = get_option(port, Options, ?DEFAULT_SYSLOG_PORT),
-    Formatter = get_option(formatter, Options, ?DEFAULT_FORMATTER),
-    Format = get_option(format, Options, ?DEFAULT_FORMAT),
+    Formatter  = get_option(formatter, Options, ?DEFAULT_FORMATTER),
+    Format     = get_option(format, Options, ?DEFAULT_FORMAT),
     init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format).
 
 init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format)
   when is_list(Ident) ->
+    MessageFormat = {Formatter, Format},
     SysLogAddr = {syslog_addr(SysLogHost), syslog_port(SysLogPort)},
     SysLogFacility = syslog:facility(Facility),
     {ok, LagerLevel} = lager_log_level(Level),
-    MessageFormat = {Formatter, Format},
     ID = log_event_id([Ident, Facility]),
     {ok, Sock} = gen_udp:open(0),
     {ok, #s{
-            addr = SysLogAddr,
-            id = ID,
-            ident = Ident,
-            format = MessageFormat,
+            addr     = SysLogAddr,
+            id       = ID,
+            ident    = Ident,
+            format   = MessageFormat,
             facility = SysLogFacility,
-            socket = Sock,
-            level = LagerLevel
+            socket   = Sock,
+            level    = LagerLevel
            }}.
 
 %%--------------------------------------------------------------------
@@ -125,27 +125,46 @@ init(Ident, Facility, Level, SysLogHost, SysLogPort, Formatter, Format)
 handle_event(
   {log, Message},
   State = #s{
-             level = Level,
-             id = ID,
-             ident = Ident,
-             socket = Sock,
-             addr = {SysLogAddr, SysLogPort},
+             level    = Level,
+             id       = ID,
+             ident    = Ident,
+             socket   = Sock,
+             addr     = {SysLogAddr, SysLogPort},
              facility = Facility,
-             format = {Formatter, Format}
+             format   = {Formatter, Format}
             }
  ) ->
     case lager_util:is_loggable(Message, Level, ID) of
         true ->
-            Severity = Facility + priority(lager_msg:severity(Message)),
-            Header = syslog_msg_header(Severity, Ident),
-            _ = gen_udp:send(
-                  Sock, SysLogAddr, SysLogPort,
-                  [Header, Formatter:format(Message, Format)]
+            Severity = lager_msg:severity(Message),
+            SysLogMsg =
+                syslog_msg(
+                  Facility, priority(Severity), Ident, Formatter, Format, Message
                  ),
+            _ = gen_udp:send(Sock, SysLogAddr, SysLogPort, SysLogMsg),
             {ok, State};
         false ->
             {ok, State}
     end;
+handle_event(
+  {log, MsgMaskLevel, {_Date, _Time}, [_LevelStr, Location, Message]},
+  State = #s{
+             level    = {mask, MaskLevel},
+             facility = Facility,
+             ident    = Ident,
+             format   = {Formatter, Format},
+             socket   = Sock,
+             addr     = {SysLogAddr, SysLogPort}
+            }
+ ) when MsgMaskLevel =< MaskLevel ->
+    MsgLevel = lager_util:num_to_level(MsgMaskLevel),
+    SysLogMsg =
+        syslog_msg(
+          Facility, priority(MsgLevel), Ident, Formatter, Format,
+          [Location, Message]
+         ),
+    _ = gen_udp:send(Sock, SysLogAddr, SysLogPort, SysLogMsg),
+    {ok, State};
 handle_event(_Event, State) ->
     {ok, State}.
 
@@ -230,6 +249,10 @@ syslog_port(Port) when is_integer(Port) andalso Port > 0 andalso Port < 65536 ->
 
 log_event_id([Ident, Facility]) -> {?MODULE, {Ident, Facility}}.
 
+-spec lager_log_level(
+        Level :: atom() | string()
+  ) -> {ok, {'mask', integer()} | integer()} | {error, atom()}.
+
 lager_log_level(Level) ->
     try lager_util:config_to_mask(Level) of
         Res -> {ok, Res}
@@ -307,11 +330,19 @@ priority(_) -> erlang:error(badarg).
 %%    DIGIT           = %d48 / NONZERO-DIGIT
 %%    NILVALUE        = "-"
 
-syslog_msg_header(Facility, Ident) ->
+-spec syslog_msg_header(
+        Facility :: non_neg_integer(),
+        Ident :: list()
+  ) -> Header :: list().
+
+syslog_msg_header(Facility, Ident)
+  when is_integer(Facility) andalso is_list(Ident) ->
     io_lib:format(
       "<~B>~B ~s ~s ~s - - -",
       [Facility, ?SYSLOG_VERSION, timestamp_str(), net_adm:localhost(), Ident]
      ).
+
+-spec timestamp_str() -> TimeStamp :: list().
 
 timestamp_str() ->
     {{Year, Month, Day}, {Hour, Min, Sec}} =
@@ -320,3 +351,17 @@ timestamp_str() ->
       "~4.10.0B-~2.10.0B-~2.10.0BT~2.10.0B:~2.10.0B:~2.10.0BZ",
       [Year, Month, Day, Hour, Min, Sec]
      ).
+
+-spec syslog_msg(
+        Facility :: non_neg_integer(),
+        Priority :: non_neg_integer(),
+        Ident :: list(),
+        Formatter :: atom(),
+        Format :: list(),
+        Message :: list()
+  ) -> SysLogMessage :: list().
+
+syslog_msg(Facility, Priority, Ident, Formatter, Format, Message) ->
+    Severity = Facility + Priority,
+    Header = syslog_msg_header(Severity, Ident),
+    [Header, Formatter:format(Message, Format)].
